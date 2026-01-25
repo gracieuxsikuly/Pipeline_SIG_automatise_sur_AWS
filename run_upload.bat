@@ -6,4 +6,4 @@ REM Activer l'environnement virtuel
 call env\Scripts\activate.bat
 
 REM Exécuter le script Python et écrire le log
-python uploadfile.py >> upload.log 2>&1
+python uploadfilemanifest.py >> upload.log 2>&1

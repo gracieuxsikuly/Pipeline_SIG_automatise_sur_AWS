@@ -1,0 +1,3 @@
+INFO:botocore.credentials:Found credentials in shared credentials file: ~/.aws/credentials
+INFO:root:Uploaded: s3://pipeline-sig-automatise-sur-aws/raw/routes.geojson
+INFO:root:Moved file to uploaded folder: routes.geojson

@@ -1,143 +1,121 @@
+import sys
 import os
 import logging
-import tempfile
 import boto3
 import geopandas as gpd
 import matplotlib.pyplot as plt
-from dotenv import load_dotenv
 from shapely.validation import make_valid
-from tabulate import tabulate
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
+from dotenv import load_dotenv
+from matplotlib.patches import Patch
+from matplotlib.lines import Line2D
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
+# ================== ARGUMENTS ==================
+if len(sys.argv) != 3:
+    print("Usage: python process_validated.py <BUCKET> <KEY>")
+    sys.exit(1)
+
+BUCKET = sys.argv[1]
+S3_KEY = sys.argv[2]
+print(f"🚀 Traitement pour s3://{BUCKET}/{S3_KEY}")
+
+# ================== CONFIG ENV ==================
 load_dotenv()
 
-BUCKET = os.getenv("BUCKET_NAME")
-AWS_PROFILE = os.getenv("AWS_PROFIL")
-AWS_REGION = os.getenv("AWS_REGION")
-
-RAW = "raw/"
 PROCESSED = "processed/"
-OUT_GEOJSON = "outputs/geojson/"
 OUT_MAP = "outputs/carte/"
+TARGET_CRS = "EPSG:32735"
 
-TARGET_CRS = "EPSG:3857"
+# ================== LOG ==================
+logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 
+s3 = boto3.client("s3")
 
-session = boto3.Session(profile_name=AWS_PROFILE, region_name=AWS_REGION)
-s3 = session.client("s3")
+# ================== FONCTIONS ==================
+def download_file(bucket, key, path):
+    """Télécharge un fichier depuis S3"""
+    try:
+        s3.download_file(bucket, key, path)
+        logging.info(f"Téléchargé : s3://{bucket}/{key}")
+        return True
+    except Exception as e:
+        logging.error(f"Erreur téléchargement {key} : {e}")
+        return False
 
-def list_geojson_files():
-    res = s3.list_objects_v2(Bucket=BUCKET, Prefix=RAW)
-    if "Contents" not in res:
-        return []
-    return [o["Key"] for o in res["Contents"] if o["Key"].endswith(".geojson")]
-
-def download(key, path):
-    s3.download_file(BUCKET, key, path)
-
-def upload(path, key):
-    s3.upload_file(path, BUCKET, key)
-
-def process_layer(path, layer_name):
+def validate_geometry(path, name):
+    """Valide les géométries d'un GeoDataFrame et reprojette en CRS métrique"""
     gdf = gpd.read_file(path)
 
     if gdf.crs is None:
-        logging.warning(f"{layer_name} : CRS manquant → EPSG:4326")
+        logging.warning(f"{name} : CRS manquant → EPSG:4326")
         gdf = gdf.set_crs(epsg=4326)
 
-    gdf["geometry"] = gdf.geometry.apply(
-        lambda g: make_valid(g) if not g.is_valid else g
-    )
-
+    gdf["geometry"] = gdf.geometry.apply(lambda g: make_valid(g) if not g.is_valid else g)
     gdf = gdf.to_crs(TARGET_CRS)
-    gdf["surface_km2"] = gdf.area / 1_000_000
-
+    
+    # Supprimer les géométries vides ou invalides restantes
+    gdf = gdf[gdf.geometry.notnull()]
+    
     return gdf
 
-def export_map(gdf, img_path, title):
+def plot_layer(gdf, name, out_path):
+    """Génère une carte simple pour la couche"""
     fig, ax = plt.subplots(figsize=(10, 10))
-    gdf.plot(ax=ax, color="lightgreen", edgecolor="black")
-    ax.set_title(title)
-    ax.axis("off")
-    plt.savefig(img_path, dpi=300, bbox_inches="tight")
+    
+    geom_type = gdf.geom_type.unique()
+    if "Point" in geom_type:
+        gdf.plot(ax=ax, color="darkgreen", markersize=6, alpha=0.7, label="Points")
+    elif "LineString" in geom_type or "MultiLineString" in geom_type:
+        gdf.plot(ax=ax, color="red", linewidth=1.5, label="Lignes")
+    elif "Polygon" in geom_type or "MultiPolygon" in geom_type:
+        gdf.plot(ax=ax, color="lightblue", edgecolor="black", alpha=0.5, label="Polygones")
+    else:
+        gdf.plot(ax=ax, color="grey", edgecolor="black")
+
+    # Légende simple
+    handles = [Patch(facecolor='lightblue', edgecolor='black', label='Polygones'),
+               Line2D([0], [0], color='red', linewidth=1.5, label='Lignes'),
+               Patch(facecolor='darkgreen', label='Points')]
+    ax.legend(handles=handles, loc='upper right')
+
+    ax.set_title(f"Carte : {name}", fontsize=14, fontweight="bold")
+    ax.set_xlabel("Coordonnées Est (m)")
+    ax.set_ylabel("Coordonnées Nord (m)")
+    ax.grid(True, linestyle="--", alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close()
+    logging.info(f"Carte générée pour {name} → {out_path}")
 
-def export_pdf(layer_name, stats, img_path, pdf_path):
-    c = canvas.Canvas(pdf_path, pagesize=A4)
-    width, height = A4
-
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(40, height - 40, f"Rapport couche : {layer_name}")
-
-    c.setFont("Helvetica", 10)
-    y = height - 80
-
-    table = tabulate(
-        stats,
-        headers=["Nb entités", "Surface totale (km²)"],
-        tablefmt="plain"
-    ).split("\n")
-
-    for line in table:
-        c.drawString(40, y, line)
-        y -= 14
-
-    c.showPage()
-    c.drawImage(img_path, 40, 80, width=500, preserveAspectRatio=True)
-    c.save()
-
-def run_pipeline():
-    files = list_geojson_files()
-
-    if not files:
-        logging.warning("Aucun GeoJSON trouvé dans raw/")
-        return
-
+# ================== PIPELINE ==================
+def run_pipeline(bucket, key):
+    import tempfile
     with tempfile.TemporaryDirectory() as tmp:
-        for key in files:
-            layer = os.path.basename(key).replace(".geojson", "")
-            local_raw = os.path.join(tmp, os.path.basename(key))
+        local_path = os.path.join(tmp, os.path.basename(key))
+        if not download_file(bucket, key, local_path):
+            logging.error("❌ Téléchargement échoué, pipeline stoppé")
+            return
 
-            download(key, local_raw)
-            gdf = process_layer(local_raw, layer)
+        # Validation des géométries
+        gdf = validate_geometry(local_path, os.path.basename(key))
+        if gdf.empty:
+            logging.warning("⚠️ Aucune géométrie valide dans le fichier")
+            return
 
-            # ---- STATISTIQUES
-            stats = [[
-                len(gdf),
-                gdf["surface_km2"].sum()
-            ]]
+        # Sauvegarder GeoJSON validé
+        os.makedirs(PROCESSED, exist_ok=True)
+        out_geojson = os.path.join(PROCESSED, f"{os.path.splitext(os.path.basename(key))[0]}_valid.geojson")
+        gdf.to_file(out_geojson, driver="GeoJSON")
+        logging.info(f"✅ Fichier validé sauvegardé : {out_geojson}")
 
-            # ---- LOG TABULATE
-            logging.info(
-                f"\nCouche : {layer}\n" +
-                tabulate(
-                    stats,
-                    headers=["Nb entités", "Surface totale (km²)"],
-                    tablefmt="grid"
-                )
-            )
+        # Générer la carte
+        os.makedirs(OUT_MAP, exist_ok=True)
+        out_map = os.path.join(OUT_MAP, f"{os.path.splitext(os.path.basename(key))[0]}_map.png")
+        plot_layer(gdf, os.path.basename(key), out_map)
+        logging.info(f"✅ Carte générée : {out_map}")
 
-            # ---- EXPORTS
-            processed = os.path.join(tmp, f"{layer}_processed.geojson")
-            final_geojson = os.path.join(tmp, f"{layer}.geojson")
-            map_img = os.path.join(tmp, f"{layer}.png")
-            pdf = os.path.join(tmp, f"{layer}_rapport.pdf")
+        print(f"✅ Traitement terminé : {len(gdf)} géométries valides")
 
-            gdf.to_file(processed, driver="GeoJSON")
-            gdf.to_file(final_geojson, driver="GeoJSON")
-            export_map(gdf, map_img, layer)
-            export_pdf(layer, stats, map_img, pdf)
-
-            # ---- UPLOAD S3
-            upload(processed, PROCESSED + f"{layer}.geojson")
-            upload(final_geojson, OUT_GEOJSON + f"{layer}.geojson")
-            upload(map_img, OUT_MAP + f"{layer}.png")
-            upload(pdf, OUT_MAP + f"{layer}_rapport.pdf")
-
-    logging.info("Pipeline terminé ✅")
-
-
+# ================== RUN ==================
 if __name__ == "__main__":
-    run_pipeline()
+    run_pipeline(BUCKET, S3_KEY)

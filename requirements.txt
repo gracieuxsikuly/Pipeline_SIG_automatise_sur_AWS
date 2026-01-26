@@ -6,3 +6,4 @@ tabulate
 psycopg2-binary 
 python-dotenv
 reportlab 
+contextily 

@@ -3,7 +3,8 @@ import sys
 import boto3
 import geopandas as gpd
 from sqlalchemy import create_engine
-from db import get_connection  # ta fonction de connexion
+from db import get_connection
+from datetime import datetime
 
 # ==========================
 # Paramètres depuis la Lambda
@@ -44,6 +45,28 @@ with tempfile.TemporaryDirectory() as tmpdir:
         sys.exit(1)
     
     # ==========================
+    # Calcul surface_km2 si Polygone
+    # ==========================
+    if gdf.geom_type.isin(["Polygon", "MultiPolygon"]).any():
+        # Reprojection en métrique pour calcul de surface (m²)
+        if gdf.crs is None:
+            print("⚠️ CRS inconnu, on suppose EPSG:4326")
+            gdf = gdf.set_crs("EPSG:4326")
+        
+        gdf_metric = gdf.to_crs(epsg=3857)  # projection métrique pour surface
+        gdf["surface_km2"] = gdf_metric["geometry"].area / 10**6  # m² → km²
+        print("✅ Colonne surface_km2 ajoutée")
+    
+    else:
+        print("ℹ️ Géométrie non polygonale, pas de surface calculée")
+    
+    # ==========================
+    # Ajout de la date de traitement
+    # ==========================
+    gdf["date_traitement"] = datetime.now()
+    print("✅ Colonne date_traitement ajoutée")
+    
+    # ==========================
     # Connexion à PostgreSQL/PostGIS
     # ==========================
     try:
@@ -51,7 +74,6 @@ with tempfile.TemporaryDirectory() as tmpdir:
         print("✅ Connexion à la base établie")
         
         # Convertir psycopg2 connection en SQLAlchemy engine
-        # Assurez-vous que get_connection() renvoie un objet psycopg2
         engine = create_engine(
             f"postgresql+psycopg2://{con.info.user}:{con.info.password}@{con.info.host}:{con.info.port}/{con.info.dbname}"
         )
@@ -66,7 +88,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
             name=table_name,
             con=engine,
             schema=SCHEMA,
-            if_exists="replace",  # remplace la table si elle existe
+            if_exists="replace",
             index=False
         )
         

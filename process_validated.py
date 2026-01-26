@@ -86,7 +86,6 @@ def plot_layer(gdf, name, out_path):
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close()
     logging.info(f"Carte générée pour {name} → {out_path}")
-
 # ================== PIPELINE ==================
 def run_pipeline(bucket, key):
     import tempfile
@@ -95,13 +94,11 @@ def run_pipeline(bucket, key):
         if not download_file(bucket, key, local_path):
             logging.error("❌ Téléchargement échoué, pipeline stoppé")
             return
-
         # Validation des géométries
         gdf = validate_geometry(local_path, os.path.basename(key))
         if gdf.empty:
             logging.warning("⚠️ Aucune géométrie valide dans le fichier")
             return
-
         # Sauvegarder GeoJSON validé
         os.makedirs(PROCESSED, exist_ok=True)
         out_geojson = os.path.join(PROCESSED, f"{os.path.splitext(os.path.basename(key))[0]}_valid.geojson")

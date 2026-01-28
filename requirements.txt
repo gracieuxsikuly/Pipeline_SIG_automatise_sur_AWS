@@ -8,3 +8,5 @@ python-dotenv
 reportlab 
 SQLAlchemy
 geoalchemy2
+tqdm
+ijson

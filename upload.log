@@ -2,3 +2,15 @@ INFO:botocore.credentials:Found credentials in shared credentials file: ~/.aws/c
 INFO:root:Uploaded routes.geojson
 INFO:botocore.credentials:Found credentials in shared credentials file: ~/.aws/credentials
 INFO:botocore.credentials:Found credentials in shared credentials file: ~/.aws/credentials
+INFO:botocore.credentials:Found credentials in shared credentials file: ~/.aws/credentials
+INFO:botocore.credentials:Found credentials in shared credentials file: ~/.aws/credentials
+INFO:root:Uploaded basedadaptationgeneralemutwangamangina.geojson
+INFO:root:Uploaded routes.geojson
+INFO:root:Uploaded Zoneculture.geojson
+INFO:botocore.credentials:Found credentials in shared credentials file: ~/.aws/credentials
+INFO:root:Uploaded pnvi.geojson
+INFO:botocore.credentials:Found credentials in shared credentials file: ~/.aws/credentials
+INFO:root:Uploaded protected_zones.geojson
+INFO:botocore.credentials:Found credentials in shared credentials file: ~/.aws/credentials
+INFO:botocore.credentials:Found credentials in shared credentials file: ~/.aws/credentials
+INFO:root:Uploaded routes.geojson
